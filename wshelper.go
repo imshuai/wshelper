@@ -2,25 +2,38 @@ package wshelper
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"time"
+
+	"io"
+
+	"io/ioutil"
 
 	"github.com/gorilla/websocket"
 )
 
+const (
+	//TextMessage 定义消息类型为字符串
+	TextMessage int = 1 + iota
+	//StreamMessage 定义消息类型为数据流
+	StreamMessage
+)
+
 //WebSocketHelper 用来升级http协议到ws协议
 type WebSocketHelper struct {
-	AuthHandleFunc    func(r *http.Request) bool                         //验证访问是否合法
-	CloseHandleFunc   func(closeStatus int, closeText string) error      //当连接关闭时调用此方法
-	KeepAlive         bool                                               //是否保持连接存活,默认不保持
-	MessageHandleFunc func(messageType int, msg []byte, err error) error //当收到消息时吊用此方法，提供消息类型messageType和消息字节数组msg
-	PingHandleFunc    func(pingMsg string) error                         //当收到ping消息时调用此方法
-	PongHandleFunc    func(pongMsg string) error                         //当收到pong消息时吊用此方法
-	c                 *websocket.Conn
-	isAlive           chan bool
-	rbufSize          int
-	wbufSize          int
+	AuthHandleFunc  func(r *http.Request) bool                    //验证访问是否合法
+	CloseHandleFunc func(closeStatus int, closeText string) error //当连接关闭时调用此方法
+	KeepAlive       bool                                          //是否保持连接存活,默认不保持
+	//MessageHandleFunc   func(messageType int, msg []byte) error       //当收到消息时吊用此方法，提供消息类型messageType和消息字节数组msg
+	TextMsgHandleFunc   func(msg string) error
+	StreamMsgHandleFunc func(r io.Reader) error
+	PingHandleFunc      func(pingMsg string) error //当收到ping消息时调用此方法
+	PongHandleFunc      func(pongMsg string) error //当收到pong消息时吊用此方法
+	c                   *websocket.Conn
+	isAlive             chan bool
+	rbufSize            int
+	wbufSize            int
+	writer              *io.Writer
 }
 
 //NewWebSocketHelper 创建新的请求升级器
@@ -80,12 +93,10 @@ func (h *WebSocketHelper) StartHandle(w http.ResponseWriter, r *http.Request) er
 					select {
 					case i := <-h.isAlive:
 						if !i {
-							log.Println("user is not alive, closing the connection")
 							h.Close()
 							return
 						}
 					case <-t.C:
-						log.Println("timeout, user is not alive, closing the connection")
 						h.Close()
 						return
 					}
@@ -94,27 +105,29 @@ func (h *WebSocketHelper) StartHandle(w http.ResponseWriter, r *http.Request) er
 		}()
 	}
 	for {
-		messageType, msg, err := h.c.ReadMessage()
+
+		msgType, r, err := h.c.NextReader()
 		if err != nil {
-			log.Println("recive message fail, err:", err)
 			return errors.New("recive message fail, err:" + err.Error())
 		}
-		switch messageType {
-		case 1:
+		switch msgType {
+		case TextMessage:
+			msg, err := ioutil.ReadAll(r)
+			if err != nil {
+				return err
+			}
 			if string(msg) == "control:ping" { //这里兼容前端js，"control:ping"将被认为是ping消息
-				h.WriteMessage(messageType, []byte("control:pong"))
+				h.WriteMessage(msgType, []byte("control:pong"))
 			} else if string(msg) == "control:pong" { //这里兼容前端js，"control:pong"将被认为是pong消息
 				h.isAlive <- true
 			} else {
-				log.Println("recived a text msg")
-				err := h.MessageHandleFunc(messageType, msg, err)
+				err := h.TextMsgHandleFunc(string(msg))
 				if err != nil {
 					return errors.New("fail to write data")
 				}
 			}
-		case 2:
-			log.Println("recived a binary msg")
-			err := h.MessageHandleFunc(messageType, msg, err)
+		case StreamMessage:
+			err := h.StreamMsgHandleFunc(r)
 			if err != nil {
 				return errors.New("fail to write data")
 			}
@@ -130,18 +143,25 @@ func (h *WebSocketHelper) Close() error {
 //WriteMessage 向websocket连接写入数据
 //messageType 指定写入数据的类型1代表文本数据，2代表二进制数据
 //message 指定要写入数据的字节数组
-func (h *WebSocketHelper) WriteMessage(messageType int, message []byte) error {
-	return h.c.WriteMessage(messageType, message)
+func (h *WebSocketHelper) WriteMessage(messageType int, message interface{}) error {
+	switch value := message.(type) {
+	case string:
+		return h.c.WriteMessage(messageType, []byte(value))
+	case io.Reader:
+		_, err := io.Copy(h.c.UnderlyingConn(), value)
+		return err
+	default:
+		return errors.New("unkown data type")
+	}
 }
 
 //ReadMessage 从websocket连接读出数据
-//返回值：
+//返回：
 //messageType 指示读出数据的类型1代表文本数据，2代表二进制数据
 //message 指示读出数据的字节数组
 //err 指示读取数据是产生的错误
 func (h *WebSocketHelper) ReadMessage() (messageType int, message []byte, err error) {
-	messageType, message, err = h.c.ReadMessage()
-	return messageType, message, err
+	return h.c.ReadMessage()
 }
 
 // WriteControl writes a control message with the given deadline.
