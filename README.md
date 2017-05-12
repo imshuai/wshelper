@@ -11,6 +11,7 @@ Helper for package `gorilla/websocket`
      直接传递给`gorilla/websocket`的`Conn.SetPingHandler`命令  
   4. `PongHandleFunc`定义接收到pong消息事件回调函数  
      直接传递给`gorilla/websocket`的`Conn.SetPongHandler`命令 
-  5. `MessageHandleFunc`定义接收到消息事件回调函数        
+  5. `TextMsgHandleFunc`定义接收到文本消息事件回调函数
+  6. `StreamMsgHandleFunc`定义接收到文本消息事件回调函数  
 - 自定义ping消息以兼容前端js无原生ping命令问题[TODO]  
 

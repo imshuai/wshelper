@@ -14,21 +14,33 @@ import (
 
 const (
 	//TextMessage 定义消息类型为字符串
-	TextMessage int = 1 + iota
+	TextMessage = 1
 	//StreamMessage 定义消息类型为数据流
-	StreamMessage
+	StreamMessage = 2
+
+	// CloseMessage denotes a close control message. The optional message
+	// payload contains a numeric code and text. Use the FormatCloseMessage
+	// function to format a close message payload.
+	CloseMessage = 8
+
+	// PingMessage denotes a ping control message. The optional message payload
+	// is UTF-8 encoded text.
+	PingMessage = 9
+
+	// PongMessage denotes a ping control message. The optional message payload
+	// is UTF-8 encoded text.
+	PongMessage = 10
 )
 
 //WebSocketHelper 用来升级http协议到ws协议
 type WebSocketHelper struct {
-	AuthHandleFunc  func(r *http.Request) bool                    //验证访问是否合法
-	CloseHandleFunc func(closeStatus int, closeText string) error //当连接关闭时调用此方法
-	KeepAlive       bool                                          //是否保持连接存活,默认不保持
-	//MessageHandleFunc   func(messageType int, msg []byte) error       //当收到消息时吊用此方法，提供消息类型messageType和消息字节数组msg
-	TextMsgHandleFunc   func(msg string) error
-	StreamMsgHandleFunc func(r io.Reader) error
-	PingHandleFunc      func(pingMsg string) error //当收到ping消息时调用此方法
-	PongHandleFunc      func(pongMsg string) error //当收到pong消息时吊用此方法
+	AuthHandleFunc      func(r *http.Request) bool                    //验证访问是否合法
+	CloseHandleFunc     func(closeStatus int, closeText string) error //当连接关闭时调用此方法
+	KeepAlive           bool                                          //是否保持连接存活,默认不保持
+	TextMsgHandleFunc   func(msg string) error                        //当收到文本消息时调用此方法
+	StreamMsgHandleFunc func(r io.Reader) error                       //当收到字节流消息时调用此方法
+	PingHandleFunc      func(pingMsg string) error                    //当收到ping消息时调用此方法
+	PongHandleFunc      func(pongMsg string) error                    //当收到pong消息时调用此方法
 	c                   *websocket.Conn
 	isAlive             chan bool
 	rbufSize            int
@@ -142,7 +154,7 @@ func (h *WebSocketHelper) Close() error {
 
 //WriteMessage 向websocket连接写入数据
 //messageType 指定写入数据的类型1代表文本数据，2代表二进制数据
-//message 指定要写入数据的字节数组
+//message 指定要写入的数据：string 或 io.Reader
 func (h *WebSocketHelper) WriteMessage(messageType int, message interface{}) error {
 	switch value := message.(type) {
 	case string:
@@ -155,17 +167,8 @@ func (h *WebSocketHelper) WriteMessage(messageType int, message interface{}) err
 	}
 }
 
-//ReadMessage 从websocket连接读出数据
-//返回：
-//messageType 指示读出数据的类型1代表文本数据，2代表二进制数据
-//message 指示读出数据的字节数组
-//err 指示读取数据是产生的错误
-func (h *WebSocketHelper) ReadMessage() (messageType int, message []byte, err error) {
-	return h.c.ReadMessage()
-}
-
-// WriteControl writes a control message with the given deadline.
-// The allowed message types are CloseMessage, PingMessage and PongMessage.
+// WriteControl 按照给定的超时，写入控制信息
+// 允许的控制信息类型有： CloseMessage, PingMessage 以及 PongMessage.
 func (h *WebSocketHelper) WriteControl(messageType int, data []byte, deadline time.Time) error {
 	return h.c.WriteControl(messageType, data, deadline)
 }
